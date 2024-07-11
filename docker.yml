@@ -1,0 +1,395 @@
+---
+- hosts: docker_server
+  gather_facts: true
+  become: true
+  remote_user: root
+  roles:
+    - docker
+
+  vars_prompt:
+    # Генерируем хэш пароля при помощи "openssl passwd -6"
+    - name: hash
+      prompt: Enter hash of your password
+      private: true
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    sysctl_config:
+      fs.inotify.max_user_watches: 16777216
+      kernel.randomize_va_space: 1
+      net.core.default_qdisc: fq
+      net.core.netdev_max_backlog: 65536
+      net.core.optmem_max: 65536
+      net.core.rmem_default: 1048576
+      net.core.rmem_max: 16777216
+      net.core.somaxconn: 65535
+      net.core.wmem_default: 1048576
+      net.core.wmem_max: 16777216
+      net.ipv4.conf.all.accept_redirects: 0
+      net.ipv4.conf.all.accept_source_route: 0
+      net.ipv4.conf.all.log_martians: 1
+      net.ipv4.conf.all.rp_filter: 1
+      net.ipv4.conf.all.secure_redirects: 0
+      net.ipv4.conf.all.send_redirects: 0
+      net.ipv4.conf.default.accept_redirects: 0
+      net.ipv4.conf.default.log_martians: 1
+      net.ipv4.conf.default.send_redirects: 0
+      net.ipv4.conf.ens3.accept_source_route: 0
+      net.ipv4.conf.ens3.rp_filter: 1
+      net.ipv4.conf.lo.accept_source_route: 0
+      net.ipv4.conf.lo.rp_filter: 1
+      net.ipv4.icmp_echo_ignore_all: 1
+      net.ipv4.icmp_echo_ignore_broadcasts: 1
+      net.ipv4.icmp_ignore_bogus_error_responses: 1
+      net.ipv4.ip_forward: 0
+      net.ipv4.ip_local_port_range: 1024 65535
+      net.ipv4.neigh.default.base_reachable_time_ms: 30000
+      net.ipv4.neigh.default.gc_interval: 30
+      net.ipv4.neigh.default.gc_stale_time: 60
+      net.ipv4.neigh.default.gc_thresh1: 8192
+      net.ipv4.neigh.default.gc_thresh2: 12228
+      net.ipv4.neigh.default.gc_thresh3: 24456
+      net.ipv4.route.flush: 1
+      net.ipv4.tcp_congestion_control: bbr
+      net.ipv4.tcp_fastopen: 0
+      net.ipv4.tcp_fin_timeout: 15
+      net.ipv4.tcp_keepalive_intvl: 15
+      net.ipv4.tcp_keepalive_probes: 6
+      net.ipv4.tcp_keepalive_time: 1800
+      net.ipv4.tcp_max_orphans: 65536
+      net.ipv4.tcp_max_syn_backlog: 65536
+      net.ipv4.tcp_max_tw_buckets: 65536
+      net.ipv4.tcp_mem: 50576 64768 98152
+      net.ipv4.tcp_moderate_rcvbuf: 1
+      net.ipv4.tcp_mtu_probing: 1
+      net.ipv4.tcp_no_metrics_save: 1
+      net.ipv4.tcp_orphan_retries: 0
+      net.ipv4.tcp_rfc1337: 1
+      net.ipv4.tcp_rmem: 4096 87380 16777216
+      net.ipv4.tcp_sack: 1
+      net.ipv4.tcp_slow_start_after_idle: 0
+      net.ipv4.tcp_synack_retries: 1
+      net.ipv4.tcp_syncookies: 0
+      net.ipv4.tcp_timestamps: 1
+      net.ipv4.tcp_tw_reuse: 1
+      net.ipv4.tcp_window_scaling: 1
+      net.ipv4.tcp_wmem: 4096 65536 16777216
+      net.ipv4.udp_wmem_min: 16384
+      net.ipv6.conf.all.accept_redirects: 0
+      net.ipv6.conf.default.accept_redirects: 0
+      net.ipv6.conf.all.disable_ipv6: 1
+      net.ipv6.conf.default.disable_ipv6: 1
+      net.ipv6.conf.lo.disable_ipv6: 1
+      net.ipv6.conf.ens3.disable_ipv6: 1
+
+  tasks:
+    - name: Установить имя хоста
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+
+    - name: Установить имя хоста в systemd
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+        use: systemd
+
+    - name: Установить часовой пояс - Europe/Moscow
+      community.general.timezone:
+        name: Europe/Moscow
+
+    - name: Добавить в /etc/hosts строку с IP и именем хоста сервера
+      ansible.builtin.lineinfile:
+        path: "/etc/hosts"
+        regexp: "^{{ ansible_default_ipv4.address }}"
+        line: "{{ ansible_default_ipv4.address }} {{ inventory_hostname }}"
+        state: present
+
+    - name: Изменить DNS-серверы для systemd
+      ansible.builtin.lineinfile:
+        path: "/etc/systemd/resolved.conf"
+        regexp: "^DNS="
+        line: "{{ item }}"
+      with_items:
+        - "DNS=1.1.1.1 1.0.0.1"
+
+    - name: Отключить LLMNR и включить DNSSEC
+      ansible.builtin.lineinfile:
+        path: "/etc/systemd/resolved.conf"
+        state: present
+        line: "{{ item }}"
+      with_items:
+        - "LLMNR=no"
+        - "DNSSEC=no"
+
+    - name: Изменить DNS-серверы в настройках сетевого интерфейса
+      ansible.builtin.lineinfile:
+        path: "/etc/network/interfaces"
+        regexp: "^    dns-nameservers"
+        line: "    dns-nameservers 1.1.1.1 1.0.0.1"
+
+    - name: Перезагрузить systemd-resolved
+      ansible.builtin.systemd:
+        state: restarted
+        daemon_reload: true
+        name: systemd-resolved.service
+        enabled: true
+
+    - name: Настроить OpenSSL
+      ansible.builtin.lineinfile:
+        path: "/etc/ssl/openssl.cnf"
+        state: present
+        line: "{{ item }}"
+      with_items:
+        - "CipherString = DEFAULT@SECLEVEL=2"
+        - "Ciphersuites = TLS_CHACHA20_POLY1305_SHA256:TLS_AES_256_GCM_SHA384"
+        - "Options = ServerPreference,PrioritizeChaCha"
+
+    - name: Настроить ядро
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        sysctl_set: yes
+        state: present
+        reload: yes
+      with_dict: "{{ sysctl_config }}"
+
+    - name: Удалить лишние пакеты
+      ansible.builtin.apt: name={{ item }} state=absent
+      with_items:
+        - apache2
+        - avahi-daemon
+        - bind9
+        - cups
+        - dnsutils
+        - dovecot-antispam
+        - dovecot-core
+        - dovecot-imapd
+        - dovecot-ldap
+        - dovecot-lmtpd
+        - dovecot-mysql
+        - dovecot-pgsql
+        - dovecot-pop3d
+        - dovecot-sieve
+        - dovecot-solr
+        - dovecot-sqlite
+        - emacs
+        - emacsen-common
+        - libapache2-mod-php
+        - mailutils
+        - mariadb-common
+        - mariadb-server
+        - mysql-common
+        - mysql-server
+        - netcat
+        - php
+        - php-fpm
+        - php-gd
+        - php-mysql
+        - postfix
+        - proftpd
+        - resolvconf
+        - samba
+        - sendmail
+        - telnet
+        - ufw
+        - vim
+        - vim-common
+        - vim-tiny
+        - vsftpd
+
+    - name: Установить нужные пакеты
+      ansible.builtin.apt: name={{ item }} state=present
+      with_items:
+        - apparmor-profiles
+        - apt-transport-https
+        - build-essential
+        - ca-certificates
+        - curl
+        - debian-archive-keyring
+        - htop
+        - iptables-persistent
+        - jq
+        - libssl-dev
+        - locales
+        - locales-all
+        - lsb-release
+        - ncdu
+        - net-tools
+        - ntpsec
+        - software-properties-common
+        - sudo
+        - unzip
+        - wget
+        - zip
+        - zlib1g-dev
+        - zsh
+        - zplug
+
+    - name: Удалить лишние зависимости
+      ansible.builtin.apt:
+        autoremove: yes
+
+    - name: Настроить кэш APT
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Запустить "apt update"
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Обновить все пакеты до последней версии
+      ansible.builtin.apt:
+        name: "*"
+        state: latest
+
+    - name: Запустить "apt full-upgrade"
+      ansible.builtin.apt:
+        upgrade: full
+
+    - name: Запустить "apt dist-upgrade"
+      ansible.builtin.apt:
+        upgrade: dist
+
+    - name: Удалить бесполезные пакеты из кэша
+      ansible.builtin.apt:
+        autoclean: yes
+
+    - name: Запустить "apt clean"
+      ansible.builtin.apt:
+        clean: yes
+
+    - name: Настроить NTPSec
+      ansible.builtin.replace:
+        path: "/etc/ntpsec/ntp.conf"
+        regexp: '^pool \d.debian.pool.ntp.org iburst$'
+        replace: "server time.cloudflare.com nts"
+
+    - name: Перезагрузить ntpsec.service
+      ansible.builtin.systemd:
+        state: restarted
+        daemon_reload: true
+        name: ntpsec.service
+        enabled: true
+
+    - name: Создать группу ammnt
+      ansible.builtin.group:
+        name: ammnt
+        state: present
+
+    - name: Создать пользователя ammnt
+      user:
+        name: ammnt
+        password: "{{ hash }}"
+        shell: /bin/zsh
+        groups: ammnt,docker
+        append: yes
+
+    - name: Создать SSH ключ для ammnt в ~/ammnt/.ssh/id_rsa
+      user:
+        name: ammnt
+        generate_ssh_key: yes
+        ssh_key_bits: 2048
+        ssh_key_file: .ssh/id_rsa
+
+    - name: Добавить authorized key из файла id_rsa.pub
+      authorized_key:
+        user: ammnt
+        state: present
+        key: "{{ lookup('file', '/Users/ildar/.ssh/id_rsa.pub') }}"
+
+    - name: Предоставить пользователю ammnt доступ к sudo
+      blockinfile:
+        path: "/etc/sudoers"
+        insertafter: "root    ALL=(ALL)       ALL"
+        block: |
+          ammnt ALL=(ALL:ALL) ALL
+
+    - name: Обновить корневые сертификаты
+      shell: /bin/bash -c "update-ca-certificates"
+
+    - name: Очистить цепочки iptables INPUT, FORWARD и OUTPUT
+      ansible.builtin.iptables:
+        chain: "{{ item }}"
+        flush: yes
+      with_items: ["INPUT", "FORWARD", "OUTPUT"]
+
+    - name: Разрешить входящие соединения на интерфейс localhost
+      ansible.builtin.iptables:
+        chain: INPUT
+        in_interface: lo
+        jump: ACCEPT
+
+    - name: Разрешить исходящие соединения через интерфейс localhost
+      ansible.builtin.iptables:
+        chain: OUTPUT
+        out_interface: lo
+        jump: ACCEPT
+
+    - name: Разрешить входящие соединения
+      ansible.builtin.iptables:
+        chain: INPUT
+        ctstate: ESTABLISHED,RELATED
+        jump: ACCEPT
+
+    - name: Разрешить исходящие соединения
+      ansible.builtin.iptables:
+        chain: OUTPUT
+        ctstate: ESTABLISHED,RELATED
+        jump: ACCEPT
+
+    - name: Сбрасывать недействительные пакеты
+      ansible.builtin.iptables:
+        chain: INPUT
+        ctstate: INVALID
+        jump: DROP
+
+    - name: Разрешить HTTP(S) и SSH порты
+      ansible.builtin.iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_ports:
+          - "80"
+          - "443"
+          - "35361"
+        jump: ACCEPT
+
+    - name: Закрыть всё остальное, в том числе ICMP и Ping
+      ansible.builtin.iptables:
+        chain: INPUT
+        jump: REJECT
+
+    - name: Сохранить состояние iptables
+      community.general.iptables_state:
+        state: saved
+        path: "/etc/iptables/rules.v4"
+
+    - name: Изменить порт SSH
+      ansible.builtin.lineinfile:
+        path: "/etc/ssh/sshd_config"
+        regexp: "^Port"
+        line: "Port 35361"
+
+    - name: Настроить SSH
+      ansible.builtin.lineinfile:
+        path: "/etc/ssh/sshd_config"
+        state: present
+        line: "{{ item }}"
+      with_items:
+        - "Protocol 2"
+        - "ClientAliveInterval 30"
+        - "ClientAliveCountMax 30"
+        - "TCPKeepAlive no"
+        - "PasswordAuthentication no"
+
+    - name: Отключить авторизацию root
+      ansible.builtin.replace:
+        path: "/etc/ssh/sshd_config"
+        regexp: "^PermitRootLogin yes"
+        replace: "PermitRootLogin no"
+
+    - name: Перезагрузить sshd
+      ansible.builtin.systemd:
+        state: restarted
+        daemon_reload: true
+        name: sshd
+        enabled: true

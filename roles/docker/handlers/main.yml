@@ -1,0 +1,6 @@
+---
+- name: Перезагрузить Docker
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true

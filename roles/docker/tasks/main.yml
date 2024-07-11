@@ -1,0 +1,17 @@
+---
+- name: Установить Docker
+  ansible.builtin.apt:
+    name=docker
+    state=present
+
+- name: Установить Docker Compose
+  ansible.builtin.apt:
+    name=docker-compose
+    state=present
+
+- name: Установить Docker.io
+  ansible.builtin.apt:
+    name=docker.io
+    state=present
+  notify:
+    - Перезагрузить Docker
